@@ -1,0 +1,226 @@
+---
+title: 'DATA 607: Final Project'
+author: "Amber Ferger"
+date: "12/7/2019"
+output: html_document
+---
+
+# The Project
+
+### Research Question: 
+**Does cost affect traveler ratings on TripAdvisor?**
+
+For the past few years, I have been very interested in exploring the world and traveling as much as I can. For my final project, I thought it would be interesting to take a look at a bunch of different European cities to see what effect cost has on travel ratings.
+
+In this analysis, I'll be comparing the European Cost Index for 56 cities to the average rating for the top 15 attractions in each city to see if there is a relationship between the two. 
+
+### The Data
+
+**European Cost Index:** The European Cost Index compares the daily cost of traveling for a variety of European cities. Each city has costs broken down into lodging, transportation, meals, drinks/entertainment, and attractions. I supplemented this data with the corresponding tripadvisor links. Data for 2018 is available on data.world as an exportable csv file here: https://data.world/sarahlovesdata/the-european-backpackers-index-2018-wwwpriceoftravelcom
+
+**TripAdvisor:** TripAdvisor is a website that individuals can use to review attractions in cities throughout the world. Each city has a ranking of top things to do based on consumer reviews. I'll be scraping the data from the top 15 attractions for each of the 56 cities in the European Cost Index to see what the average rating is for each review. 
+
+# Libraries
+For this project, I'll be using the following packages:
+
+- **tidyverse**: data manipulation
+- **rvest**: html extraction
+
+
+``` {r, warning = FALSE, message = FALSE}
+library(tidyverse)
+library(rvest)
+
+```
+
+# European Cost Index Data
+
+### Load the Data
+Let's first load in the data as a **tibble** and change the column names. Later on, we'll use the **TRIPADVISOR_LINK** column to grab the ratings from the websites.
+``` {r}
+
+bpData <- as_tibble(read.csv('https://raw.githubusercontent.com/amberferger/DATA607_FinalProject/master/BackpackersData.csv',stringsAsFactors = FALSE))
+
+colnames(bpData) <- c('BEST_HOSTEL', 'HOSTEL_URL', 'CITY', 'COUNTRY', 'LOCAL_CURRENCY', 'LOCAL_CURRENCY_CODE', 'RANK', 'TOTAL_USD', 'ATTRACTIONS_USD', 'HOSTEL_COST', 'DRINKS_ENT_COST', 'MEALS_COST', 'TRANSPORT_COST', 'TRIPADVISOR_LINK')
+
+```
+
+# TripAdvisor Data
+Our strategy here will be to cycle through the links in the **TRIPADVISOR_LINK** column from the **bpData** dataframe to extract the websites for all attractions in each city. We'll then cycle through all of the attraction websites and grab the average rating for each. Finally, we'll generate the average rating per city by combining all of the attraction scores.  
+
+### Attraction Websites
+First, we'll make a data frame to store the attraction websites. 
+``` {r}
+
+finalAttractions <- data.frame(CITY = character(),
+                            ATTRACTION_URL = character(),
+                           stringsAsFactors=FALSE) 
+
+```
+
+
+Next, we'll use a for loop to cycle through the websites and extract all html review links. This data will be appended to the **finalAttractions** dataframe. 
+``` {r, warning = FALSE, message = FALSE}
+
+# for all cities in list
+for (i in seq(1:nrow(bpData)))
+  {
+  taLink <- bpData$TRIPADVISOR_LINK[i]
+  page <- read_html(taLink)
+  
+  attractions <- page %>% 
+    html_nodes('div') %>%
+    html_children() %>%
+    html_attr('href') %>%
+    tibble::enframe() %>%
+    select(-name) %>%
+    filter(str_detect(value, '#REVIEW'))
+  
+  # data transformation
+  attractions$value <- paste0('https://www.tripadvisor.com',attractions$value)
+  attractions$CITY <- bpData$CITY[i]
+  
+  colnames(attractions) <- c('ATTRACTION_URL','CITY')
+  
+  if (nrow(attractions) >0)
+  {
+    finalAttractions <- rbind(finalAttractions,attractions)
+  }
+}
+
+```
+
+
+Since there are quite a few attraction websites per city, let's limit it to 15 per site. This will allow us to cycle through the data faster.
+
+``` {r}
+
+finalAttractions <- Reduce(rbind,by(finalAttractions, finalAttractions["CITY"], head, n=15))
+
+```
+
+### Attraction Ratings 
+Similar to the process for the first set of websites, we will create an empty data frame to store our ratings for each city.
+``` {r}
+
+finalReviews <- data.frame(CITY = character(),
+                           ATTRACTION_URL = character(),
+                           RATING = character(),
+                           stringsAsFactors=FALSE) 
+
+```
+
+Now, we will cycle through all of the websites listed in **finalAttractions** and grab the rating for each. Since each page contains links to additional review sites, we will limit the pull to only the very first instance of a rating. This corresponds to the rating listed at the top of the page.    
+
+``` {r}
+
+# for every attraction in the list
+for (i in seq(1:nrow(finalAttractions)))
+{
+  review <- finalAttractions$ATTRACTION_URL[i]
+  pageInfo <- read_html(review)
+  
+  rating <- pageInfo %>%
+    html_nodes('span.ui_bubble_rating') %>%
+    html_attr('alt') %>%
+    as.data.frame()
+  
+   if (sum(!is.na(rating)) > 0)
+   {
+     rating <- rating %>% filter(!is.na(rating))
+     rating <- rating[1,]
+     rating <- as.data.frame(rating)
+    
+     rating$CITY <- finalAttractions$CITY[i]
+     rating$ATTRACTION_URL <- finalAttractions$ATTRACTION_URL[i]
+    
+     colnames(rating) <- c('RATING', 'CITY', 'ATTRACTION_URL')
+    
+     finalReviews <- rbind(finalReviews,rating)
+   }
+  
+  if (i%% 100 == 0)
+  {
+    print(i)
+  }
+
+}
+
+```
+
+### Convert Attraction data to numeric values 
+Our final data frame contains 3 columns: CITY, ATTRACTION_URL, and RATING. Since the RATING column is in text format, we need to convert it to a numeric ranking. We'll create a lookup table that contains the ratings that we want to use and merge this with the **finalReviews** data. 
+
+``` {r}
+lookup <- data.frame(RATING=levels(finalReviews$RATING), NUMERIC_RATING=c(2.5, 3, 3.5, 4, 4.5, 5, 2, 1))
+reviewData <- merge(finalReviews, lookup, by="RATING")
+
+```
+
+
+### Final Ratings
+Our last step before merging the data with the cost information is to summarize the average rating per city. 
+
+``` {r}
+
+reviewData <- reviewData %>%
+  group_by(CITY) %>%
+  summarize(AVG_RATING = mean(NUMERIC_RATING))
+
+```
+
+
+# Analysis
+Our research question is whether there is a relationship between cost of a city and overall rating. Therefore, we know that:
+
+- H(0) : There is no relationship between cost of a city and overall rating
+- H(A) : There is a relationship between cost of a city and overall rating
+
+In order to reject the null hypothesis, we must have a p-value that is < 0.05. 
+
+### Initial View
+Let's merge our data back with the **bpData** frame and plot the results:
+
+``` {r}
+
+finalData <- merge(bpData, reviewData, by = 'CITY') %>%
+  select(c('CITY', 'RANK', 'TOTAL_USD', 'AVG_RATING'))
+
+plot(finalData$TOTAL_USD,finalData$AVG_RATING)
+
+```
+
+From the plot, we can't really see too much of a pattern with the data. Most cities have an average rating around 4.5 with some exceptions that don't appear to follow a definitive pattern. 
+
+### Correlation
+Let's take a look at the correlation between the two variables. 
+``` {r}
+
+cor(finalData$TOTAL_USD,finalData$AVG_RATING)
+
+```
+
+We have a negative correlation, which means that as the cost of a city increases, the average rating decreases. Correlation can have a value between -1 and 1, with 0 meaning no correlation at all. Since our value is close to 0, we know that there is a slight negative correlation between the two variables, but it is not strong. 
+
+
+### Linear Regression
+Now let's try to fit a linear model to the data. The summary of this information will provide us with the evidence to either confirm or reject the null hypothesis: 
+
+``` {r}
+
+model <- lm(TOTAL_USD ~ AVG_RATING, data = finalData)
+summary(model)
+
+```
+
+From this, we can see **p value > 0.05 **. Because of this, we cannot reject the null hypothesis. This means that **There is no clear relationship between cost and average rating of a city.**
+
+
+# Conclusions
+In this project:
+
+- We used **rvest** to scrape websites for TripAdvisor ratings from the 56 cities listed on the European Backpackers Index dataset
+- We used **tidyverse** to clean, merge, and aggregate the data to get an average rating per city
+- We used a **linear model**, **correlation coefficient**, and a **scatterplot** to analyze the relationship between average rating and cost of a city
+
+From this analysis, we can conclude that there is no relationship between the cost and the average rating. My guess is that this is because the reviews are dependent upon the people that rate them, and there is a bias from this. In other words, more people are likely to review if they really like a place or really dislike a place. Since we limited to the top 15 attractions in each city, we likely subset our data just to the individuals that ranked each location highly. Future work would include expanding this analysis to all of the ratings per site. 
