@@ -1,0 +1,83 @@
+Where should I go next?: An exploration of travel ratings vs cost
+========================================================
+author: Amber Ferger
+date: 12/11/2019
+autosize: true
+
+Agenda
+========================================================
+
+
+- Problem
+- General Approach
+- Results
+- Challenges
+
+Research Question
+========================================================
+
+**Does cost affect traveler ratings on TripAdvisor?**
+
+- *European Cost Index:* Compares the daily cost of traveling to a variety of European cities
+- *TripAdvisor:* Provides user-ranked profiles of attractions across the world
+
+
+Approach
+========================================================
+
+- Scrape the TripAdvisor websites of each European city for the urls of the top 15 attractions
+- Cycle through attraction websites to pull the average rating
+- Develop an average rating per city 
+- Compare the cost index to the average rating for each city 
+
+
+Results - Total $ vs Average Rating
+========================================================
+
+```{r, eval = FALSE}
+
+plot(finalData$TOTAL_USD,finalData$AVG_RATING)
+
+```
+
+![](plot.png)
+
+
+Results - Linear Model
+========================================================
+
+```{r, eval = FALSE}
+
+model <- lm(TOTAL_USD ~ AVG_RATING, data = finalData)
+summary(model)
+
+```
+
+![](linearReg.png)
+
+Conclusions
+========================================================
+
+- There is no statistically significant relationship between cost and average rating
+- Bias from reviewers?
+- Top 15 sites only: likely to be positive/high ranked
+- Expand to include all attraction reviews
+
+
+Challenge 1 - Website URLS
+========================================================
+
+![](urlExample.png)
+
+- Have both a location ID and a location name
+- Location ID appears to be randomly generated
+- Solution: Manually search for the 56 websites
+
+
+Challenge 2 - Rating Extraction
+========================================================
+
+![](additionalReviews.png)
+
+- Have additional reviews on the same page
+- Solution: Take only the first review
